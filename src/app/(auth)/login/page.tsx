@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -726,16 +725,6 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Footer */}
-        <p className="text-center text-xs text-zinc-600 mt-6">
-          ¿No tienes cuenta?{' '}
-          <Link href="/register" className="transition-colors" style={{ color: 'rgba(0,255,213,0.6)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = 'rgba(0,255,213,0.9)')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(0,255,213,0.6)')}
-          >
-            Registrarse
-          </Link>
-        </p>
       </div>
     </div>
   )
