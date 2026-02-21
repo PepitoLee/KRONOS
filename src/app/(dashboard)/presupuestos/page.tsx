@@ -5,7 +5,6 @@ import { createClient } from '@/lib/supabase/client'
 import { DataTable } from '@/components/tables/DataTable'
 import { ExportButton } from '@/components/import-export/ExportButton'
 import { BreadcrumbNav } from '@/components/layout/BreadcrumbNav'
-import { formatCurrency } from '@/lib/utils/currency'
 import { formatDate } from '@/lib/utils/dates'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,10 +39,12 @@ import Link from 'next/link'
 interface Presupuesto {
   id: string
   nombre: string
-  periodo: number
-  monto_total: number
+  tipo: string
+  anio: number
+  periodo_inicio: string
+  periodo_fin: string
   estado: 'borrador' | 'aprobado' | 'ejecutando' | 'cerrado'
-  descripcion: string | null
+  notas: string | null
   created_at: string
 }
 
@@ -54,15 +55,15 @@ const presupuestoSchema = z.object({
     .string()
     .min(3, 'El nombre debe tener al menos 3 caracteres')
     .max(120, 'El nombre no puede exceder 120 caracteres'),
-  periodo: z
-    .number({ error: 'Ingrese un año válido' })
-    .int('El periodo debe ser un año entero')
-    .min(2020, 'El periodo mínimo es 2020')
-    .max(2099, 'El periodo máximo es 2099'),
-  monto_total: z
-    .number({ error: 'Ingrese un monto válido' })
-    .positive('El monto debe ser mayor a 0'),
-  descripcion: z.string().max(500, 'Máximo 500 caracteres').optional(),
+  tipo: z.string().min(1, 'Seleccione un tipo de presupuesto'),
+  anio: z
+    .number({ message: 'Ingrese un año válido' })
+    .int('El año debe ser un entero')
+    .min(2020, 'El año mínimo es 2020')
+    .max(2099, 'El año máximo es 2099'),
+  periodo_inicio: z.string().min(1, 'La fecha de inicio es requerida'),
+  periodo_fin: z.string().min(1, 'La fecha de fin es requerida'),
+  notas: z.string().max(500, 'Máximo 500 caracteres').optional(),
 })
 
 type PresupuestoForm = z.infer<typeof presupuestoSchema>
@@ -81,6 +82,14 @@ const estadoLabels: Record<Presupuesto['estado'], string> = {
   aprobado: 'Aprobado',
   ejecutando: 'Ejecutando',
   cerrado: 'Cerrado',
+}
+
+const tipoLabels: Record<string, string> = {
+  operativo: 'Operativo',
+  ventas: 'Ventas',
+  proyeccion: 'Proyección',
+  inversion: 'Inversión',
+  general: 'General',
 }
 
 // ─── Table columns ───────────────────────────────────────────────
@@ -102,20 +111,29 @@ const columns: ColumnDef<Presupuesto, unknown>[] = [
     },
   },
   {
-    accessorKey: 'periodo',
-    header: 'Periodo',
+    accessorKey: 'tipo',
+    header: 'Tipo',
     cell: ({ row }) => (
-      <span className="font-mono text-sm text-zinc-300">
-        {row.getValue('periodo') as number}
+      <span className="text-sm text-zinc-300">
+        {tipoLabels[row.original.tipo] ?? row.original.tipo}
       </span>
     ),
   },
   {
-    accessorKey: 'monto_total',
-    header: () => <span className="text-right block">Monto Total</span>,
+    accessorKey: 'anio',
+    header: 'Año',
     cell: ({ row }) => (
-      <span className="font-mono text-sm font-medium text-zinc-200 text-right block">
-        {formatCurrency(row.getValue('monto_total') as number)}
+      <span className="font-mono text-sm text-zinc-300">
+        {row.getValue('anio') as number}
+      </span>
+    ),
+  },
+  {
+    accessorKey: 'periodo_inicio',
+    header: 'Periodo',
+    cell: ({ row }) => (
+      <span className="text-sm text-zinc-400">
+        {formatDate(row.original.periodo_inicio)} — {formatDate(row.original.periodo_fin)}
       </span>
     ),
   },
@@ -162,9 +180,11 @@ export default function PresupuestosPage() {
     resolver: zodResolver(presupuestoSchema) as any,
     defaultValues: {
       nombre: '',
-      periodo: new Date().getFullYear(),
-      monto_total: 0,
-      descripcion: '',
+      tipo: '',
+      anio: new Date().getFullYear(),
+      periodo_inicio: '',
+      periodo_fin: '',
+      notas: '',
     },
   })
 
@@ -175,7 +195,7 @@ export default function PresupuestosPage() {
       try {
         const { data, error } = await supabase
           .from('presupuestos')
-          .select('id, nombre, periodo, monto_total, estado, descripcion, created_at')
+          .select('id, nombre, tipo, anio, periodo_inicio, periodo_fin, estado, notas, created_at')
           .order('created_at', { ascending: false })
 
         if (error) {
@@ -199,16 +219,26 @@ export default function PresupuestosPage() {
   const onSubmit = async (formData: PresupuestoForm) => {
     setSaving(true)
     try {
+      const userRes = await supabase.auth.getUser()
+      const { data: usuario } = await supabase
+        .from('usuarios')
+        .select('empresa_id')
+        .eq('id', userRes.data.user?.id)
+        .single()
+
       const { data, error } = await supabase
         .from('presupuestos')
         .insert({
           nombre: formData.nombre,
-          periodo: formData.periodo,
-          monto_total: formData.monto_total,
-          descripcion: formData.descripcion || null,
+          tipo: formData.tipo,
+          anio: formData.anio,
+          periodo_inicio: formData.periodo_inicio,
+          periodo_fin: formData.periodo_fin,
+          notas: formData.notas || null,
           estado: 'borrador',
+          empresa_id: usuario?.empresa_id,
         })
-        .select()
+        .select('id, nombre, tipo, anio, periodo_inicio, periodo_fin, estado, notas, created_at')
         .single()
 
       if (error) {
@@ -237,16 +267,18 @@ export default function PresupuestosPage() {
 
   const exportData = filteredPresupuestos.map((p) => ({
     nombre: p.nombre,
-    periodo: p.periodo,
-    monto_total: p.monto_total,
+    tipo: tipoLabels[p.tipo] ?? p.tipo,
+    anio: p.anio,
+    periodo: `${p.periodo_inicio} - ${p.periodo_fin}`,
     estado: estadoLabels[p.estado],
     fecha_creacion: formatDate(p.created_at),
   }))
 
   const exportColumns = [
     { header: 'Nombre', key: 'nombre' },
+    { header: 'Tipo', key: 'tipo' },
+    { header: 'Año', key: 'anio' },
     { header: 'Periodo', key: 'periodo' },
-    { header: 'Monto Total (PEN)', key: 'monto_total' },
     { header: 'Estado', key: 'estado' },
     { header: 'Fecha Creación', key: 'fecha_creacion' },
   ]
@@ -315,7 +347,7 @@ export default function PresupuestosPage() {
                 Nuevo Presupuesto
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-[#111827] border-zinc-800 sm:max-w-[520px]">
+            <DialogContent className="bg-[#111827] border-zinc-800 sm:max-w-[560px]">
               <DialogHeader>
                 <DialogTitle className="text-zinc-100">Crear Presupuesto</DialogTitle>
               </DialogHeader>
@@ -337,55 +369,89 @@ export default function PresupuestosPage() {
                   )}
                 </div>
 
-                {/* Periodo + Monto */}
+                {/* Tipo + Año */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="periodo" className="text-zinc-300">
-                      Periodo (Año)
-                    </Label>
-                    <Input
-                      id="periodo"
-                      type="number"
-                      placeholder="2026"
-                      className="bg-zinc-900 border-zinc-700 text-zinc-100 font-mono placeholder:text-zinc-600"
-                      {...register('periodo', { valueAsNumber: true })}
-                    />
-                    {errors.periodo && (
-                      <p className="text-xs text-red-400">{errors.periodo.message}</p>
+                    <Label className="text-zinc-300">Tipo</Label>
+                    <Select onValueChange={(v) => setValue('tipo', v)}>
+                      <SelectTrigger className="bg-zinc-900 border-zinc-700 text-zinc-100">
+                        <SelectValue placeholder="Seleccionar tipo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="operativo">Operativo</SelectItem>
+                        <SelectItem value="ventas">Ventas</SelectItem>
+                        <SelectItem value="proyeccion">Proyección</SelectItem>
+                        <SelectItem value="inversion">Inversión</SelectItem>
+                        <SelectItem value="general">General</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {errors.tipo && (
+                      <p className="text-xs text-red-400">{errors.tipo.message}</p>
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="monto_total" className="text-zinc-300">
-                      Monto Total (PEN)
+                    <Label htmlFor="anio" className="text-zinc-300">
+                      Año
                     </Label>
                     <Input
-                      id="monto_total"
+                      id="anio"
                       type="number"
-                      step="0.01"
-                      placeholder="0.00"
+                      placeholder="2026"
                       className="bg-zinc-900 border-zinc-700 text-zinc-100 font-mono placeholder:text-zinc-600"
-                      {...register('monto_total', { valueAsNumber: true })}
+                      {...register('anio', { valueAsNumber: true })}
                     />
-                    {errors.monto_total && (
-                      <p className="text-xs text-red-400">{errors.monto_total.message}</p>
+                    {errors.anio && (
+                      <p className="text-xs text-red-400">{errors.anio.message}</p>
                     )}
                   </div>
                 </div>
 
-                {/* Descripcion */}
+                {/* Periodo inicio + fin */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="periodo_inicio" className="text-zinc-300">
+                      Periodo Inicio
+                    </Label>
+                    <Input
+                      id="periodo_inicio"
+                      type="date"
+                      className="bg-zinc-900 border-zinc-700 text-zinc-100"
+                      {...register('periodo_inicio')}
+                    />
+                    {errors.periodo_inicio && (
+                      <p className="text-xs text-red-400">{errors.periodo_inicio.message}</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="periodo_fin" className="text-zinc-300">
+                      Periodo Fin
+                    </Label>
+                    <Input
+                      id="periodo_fin"
+                      type="date"
+                      className="bg-zinc-900 border-zinc-700 text-zinc-100"
+                      {...register('periodo_fin')}
+                    />
+                    {errors.periodo_fin && (
+                      <p className="text-xs text-red-400">{errors.periodo_fin.message}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Notas */}
                 <div className="space-y-2">
-                  <Label htmlFor="descripcion" className="text-zinc-300">
-                    Descripción <span className="text-zinc-600">(opcional)</span>
+                  <Label htmlFor="notas" className="text-zinc-300">
+                    Notas <span className="text-zinc-600">(opcional)</span>
                   </Label>
                   <Textarea
-                    id="descripcion"
+                    id="notas"
                     rows={3}
-                    placeholder="Descripción del presupuesto..."
+                    placeholder="Observaciones del presupuesto..."
                     className="bg-zinc-900 border-zinc-700 text-zinc-100 placeholder:text-zinc-600 resize-none"
-                    {...register('descripcion')}
+                    {...register('notas')}
                   />
-                  {errors.descripcion && (
-                    <p className="text-xs text-red-400">{errors.descripcion.message}</p>
+                  {errors.notas && (
+                    <p className="text-xs text-red-400">{errors.notas.message}</p>
                   )}
                 </div>
 

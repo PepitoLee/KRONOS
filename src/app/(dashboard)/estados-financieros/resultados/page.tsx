@@ -42,10 +42,11 @@ export default function EstadoResultadosPage() {
         .select(`
           debe,
           haber,
-          cuentas_contables!inner(codigo)
+          cuentas_contables!inner(codigo),
+          asientos_contables!inner(fecha)
         `)
-        .gte('fecha', startDate)
-        .lt('fecha', endDate)
+        .gte('asientos_contables.fecha', startDate)
+        .lt('asientos_contables.fecha', endDate)
 
       if (error) {
         console.error('Error fetching movimientos:', error)

@@ -43,6 +43,17 @@ const labelMap: Record<string, string> = {
   'clima-laboral': 'Clima Laboral',
   auditoria: 'Auditoría',
   legal: 'Control Legal',
+  configuracion: 'Configuración',
+  'cxc-cxp': 'Cuentas por Cobrar/Pagar',
+  'flujo-caja-proyectado': 'Flujo de Caja Proyectado',
+  ple: 'Libros Electrónicos PLE',
+  'pdt-621': 'PDT 621',
+  calendario: 'Calendario Tributario',
+  benchmarking: 'Benchmarking',
+  reportes: 'Reportes',
+  ai: 'KRONOS AI',
+  'facturacion-electronica': 'Facturación Electrónica',
+  'importar-estado': 'Importar Estado Bancario',
 }
 
 export function BreadcrumbNav() {

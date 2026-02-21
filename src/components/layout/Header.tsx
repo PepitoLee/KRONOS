@@ -3,7 +3,8 @@
 import { useAppStore } from '@/lib/stores/app-store'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { PanelLeft, Bell, LogOut, User } from 'lucide-react'
+import { PanelLeft, LogOut, User } from 'lucide-react'
+import { NotificationCenter } from '@/components/layout/NotificationCenter'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,10 +43,7 @@ export function Header() {
 
       <div className="flex items-center gap-3">
         {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative text-zinc-400 hover:text-zinc-100">
-          <Bell className="h-5 w-5" />
-          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-emerald-500" />
-        </Button>
+        <NotificationCenter />
 
         {/* User Menu */}
         <DropdownMenu>

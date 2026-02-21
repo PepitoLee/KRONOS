@@ -22,8 +22,18 @@ import {
   ChevronLeft,
   PanelLeftClose,
   PanelLeft,
+  FileOutput,
+  Bot,
+  Calendar,
+  BookOpen,
+  Calculator,
+  Receipt,
+  Upload,
+  Target,
 } from 'lucide-react'
 import { useState } from 'react'
+import { EmpresaSwitcher } from '@/components/layout/EmpresaSwitcher'
+import { ViewModeToggle } from '@/components/layout/ViewModeToggle'
 
 interface NavItem {
   label: string
@@ -41,6 +51,7 @@ const navigation: NavItem[] = [
     children: [
       { label: 'Registro', href: '/documentos' },
       { label: 'Nuevo', href: '/documentos/nuevo' },
+      { label: 'Facturación Electrónica', href: '/documentos/facturacion-electronica' },
     ],
   },
   {
@@ -60,6 +71,7 @@ const navigation: NavItem[] = [
       { label: 'Estado de Resultados', href: '/estados-financieros/resultados' },
       { label: 'Situación Financiera', href: '/estados-financieros/situacion' },
       { label: 'Flujo de Caja', href: '/estados-financieros/flujo-caja' },
+      { label: 'Flujo Proyectado', href: '/estados-financieros/flujo-caja-proyectado' },
     ],
   },
   {
@@ -71,6 +83,7 @@ const navigation: NavItem[] = [
       { label: 'Evolutivo Ventas', href: '/indicadores/ventas' },
       { label: 'Productividad', href: '/indicadores/productividad' },
       { label: 'RRHH', href: '/indicadores/rrhh' },
+      { label: 'Benchmarking', href: '/indicadores/benchmarking' },
     ],
   },
   {
@@ -80,6 +93,9 @@ const navigation: NavItem[] = [
     children: [
       { label: 'IGV', href: '/impuestos/igv' },
       { label: 'Renta', href: '/impuestos/renta' },
+      { label: 'Libros PLE', href: '/impuestos/ple' },
+      { label: 'PDT 621', href: '/impuestos/pdt-621' },
+      { label: 'Calendario', href: '/impuestos/calendario' },
     ],
   },
   {
@@ -90,6 +106,8 @@ const navigation: NavItem[] = [
       { label: 'Cuadre de Caja', href: '/tesoreria/cuadre-caja' },
       { label: 'Depósitos', href: '/tesoreria/depositos' },
       { label: 'Conciliaciones', href: '/tesoreria/conciliaciones' },
+      { label: 'CxC / CxP', href: '/tesoreria/cxc-cxp' },
+      { label: 'Importar Estado', href: '/tesoreria/importar-estado' },
     ],
   },
   { label: 'Presupuestos', href: '/presupuestos', icon: ClipboardList },
@@ -131,6 +149,8 @@ const navigation: NavItem[] = [
       { label: 'Control', href: '/auditoria/legal' },
     ],
   },
+  { label: 'Reportes', href: '/reportes', icon: FileOutput },
+  { label: 'KRONOS AI', href: '/ai', icon: Bot },
 ]
 
 function NavItemComponent({ item }: { item: NavItem }) {
@@ -228,6 +248,20 @@ export function Sidebar() {
           )}
         </button>
       </div>
+
+      {/* Empresa Switcher */}
+      {sidebarOpen && (
+        <div className="border-b border-zinc-800 px-3 py-3">
+          <EmpresaSwitcher />
+        </div>
+      )}
+
+      {/* View Mode Toggle */}
+      {sidebarOpen && (
+        <div className="border-b border-zinc-800 px-3 py-2">
+          <ViewModeToggle />
+        </div>
+      )}
 
       {/* Navigation */}
       {sidebarOpen && (

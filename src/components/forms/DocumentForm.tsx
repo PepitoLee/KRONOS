@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm, useFieldArray } from 'react-hook-form'
 import { z } from 'zod'
@@ -15,6 +15,7 @@ import {
   FileText,
   Save,
   Calculator,
+  Search,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -93,6 +94,8 @@ export default function DocumentForm() {
   const router = useRouter()
   const supabase = createClient()
   const [submitting, setSubmitting] = useState(false)
+  const [validatingRuc, setValidatingRuc] = useState(false)
+  const [fetchingTipoCambio, setFetchingTipoCambio] = useState(false)
 
   const form = useForm<DocumentoFormValues>({
     resolver: zodResolver(documentoSchema) as any,
@@ -119,6 +122,58 @@ export default function DocumentForm() {
 
   const watchMoneda = form.watch('moneda')
   const watchDetalles = form.watch('detalles')
+
+  // Auto-fill tipo de cambio cuando moneda es USD
+  const fetchTipoCambio = useCallback(async () => {
+    setFetchingTipoCambio(true)
+    try {
+      const res = await fetch('/api/tipo-cambio')
+      if (res.ok) {
+        const data = await res.json()
+        if (data.venta) {
+          form.setValue('tipo_cambio', data.venta)
+        }
+      }
+    } catch {
+      // Silently fail - user can input manually
+    } finally {
+      setFetchingTipoCambio(false)
+    }
+  }, [form])
+
+  useEffect(() => {
+    if (watchMoneda === 'USD') {
+      fetchTipoCambio()
+    }
+  }, [watchMoneda, fetchTipoCambio])
+
+  // Validar RUC y auto-fill nombre del tercero
+  const handleValidarRuc = async () => {
+    const ruc = form.getValues('ruc_dni_tercero')
+    if (!ruc || ruc.length !== 11) {
+      toast.error('RUC invalido', { description: 'El RUC debe tener 11 digitos.' })
+      return
+    }
+    setValidatingRuc(true)
+    try {
+      const res = await fetch(`/api/ruc?ruc=${ruc}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.razon_social) {
+          form.setValue('nombre_tercero', data.razon_social)
+          toast.success('RUC validado', { description: data.razon_social })
+        } else if (data.valid) {
+          toast.info('RUC valido', { description: 'No se encontro razon social automaticamente.' })
+        } else {
+          toast.error('RUC invalido', { description: data.error || 'El RUC no paso la validacion.' })
+        }
+      }
+    } catch {
+      toast.error('Error al validar', { description: 'No se pudo conectar al servicio de validacion.' })
+    } finally {
+      setValidatingRuc(false)
+    }
+  }
 
   const calcItemSubtotal = (cantidad: number, precio: number) => {
     return cantidad * precio
@@ -223,78 +278,160 @@ export default function DocumentForm() {
         return
       }
 
-      let asientosRows: {
-        documento_id: string
-        cuenta: string
-        descripcion: string
+      // Obtener empresa_id del usuario
+      const { data: usuario } = await supabase
+        .from('usuarios')
+        .select('empresa_id')
+        .eq('id', user.id)
+        .single()
+
+      const empresaId = usuario?.empresa_id
+      if (!empresaId) {
+        toast.error('Error de configuracion', {
+          description: 'No se encontro la empresa asociada al usuario.',
+        })
+        setSubmitting(false)
+        return
+      }
+
+      // Obtener periodo contable abierto
+      const fechaEmision = new Date(data.fecha_emision)
+      const { data: periodo } = await supabase
+        .from('periodos_contables')
+        .select('id')
+        .eq('empresa_id', empresaId)
+        .eq('anio', fechaEmision.getFullYear())
+        .eq('mes', fechaEmision.getMonth() + 1)
+        .eq('estado', 'abierto')
+        .single()
+
+      if (!periodo) {
+        toast.error('Periodo no disponible', {
+          description: 'No existe un periodo contable abierto para la fecha seleccionada.',
+        })
+        setSubmitting(false)
+        return
+      }
+
+      // Obtener ultimo numero de asiento
+      const { data: lastAsiento } = await supabase
+        .from('asientos_contables')
+        .select('numero')
+        .eq('empresa_id', empresaId)
+        .eq('periodo_id', periodo.id)
+        .order('numero', { ascending: false })
+        .limit(1)
+        .single()
+
+      const nextNumero = (lastAsiento?.numero ?? 0) + 1
+
+      // Crear asiento contable (header)
+      const glosa = data.tipo_operacion === 'venta'
+        ? `Venta ${TIPO_DOCUMENTO_LABELS[data.tipo]} ${data.serie}-${data.numero}`
+        : `Compra ${TIPO_DOCUMENTO_LABELS[data.tipo]} ${data.serie}-${data.numero}`
+
+      const { data: asiento, error: asientoError } = await supabase
+        .from('asientos_contables')
+        .insert({
+          empresa_id: empresaId,
+          periodo_id: periodo.id,
+          numero: nextNumero,
+          fecha: data.fecha_emision,
+          glosa,
+          tipo: 'operacion',
+          documento_id: documento.id,
+          estado: 'registrado',
+        })
+        .select('id')
+        .single()
+
+      if (asientoError) {
+        toast.error('Error al generar asiento contable', {
+          description: asientoError.message,
+        })
+        setSubmitting(false)
+        return
+      }
+
+      // Resolver cuenta_contable_id por codigo
+      const codigosNeeded = data.tipo_operacion === 'venta'
+        ? ['12', '70', '40']
+        : ['60', '40', '42']
+
+      const { data: cuentas } = await supabase
+        .from('cuentas_contables')
+        .select('id, codigo')
+        .eq('empresa_id', empresaId)
+        .in('codigo', codigosNeeded)
+
+      const cuentaMap = new Map(cuentas?.map(c => [c.codigo, c.id]) ?? [])
+
+      // Crear movimientos contables (detalle)
+      let movimientos: {
+        asiento_id: string
+        cuenta_contable_id: string
         debe: number
         haber: number
-        user_id: string
+        glosa: string
       }[] = []
 
       if (data.tipo_operacion === 'venta') {
-        asientosRows = [
+        movimientos = [
           {
-            documento_id: documento.id,
-            cuenta: '12',
-            descripcion: 'Cuentas por cobrar comerciales',
+            asiento_id: asiento.id,
+            cuenta_contable_id: cuentaMap.get('12') ?? '',
             debe: total,
             haber: 0,
-            user_id: user.id,
+            glosa: 'Cuentas por cobrar comerciales',
           },
           {
-            documento_id: documento.id,
-            cuenta: '70',
-            descripcion: 'Ventas',
+            asiento_id: asiento.id,
+            cuenta_contable_id: cuentaMap.get('70') ?? '',
             debe: 0,
             haber: subtotal,
-            user_id: user.id,
+            glosa: 'Ventas',
           },
           {
-            documento_id: documento.id,
-            cuenta: '40',
-            descripcion: 'Tributos por pagar - IGV',
+            asiento_id: asiento.id,
+            cuenta_contable_id: cuentaMap.get('40') ?? '',
             debe: 0,
             haber: igv,
-            user_id: user.id,
+            glosa: 'Tributos por pagar - IGV',
           },
         ]
       } else {
-        asientosRows = [
+        movimientos = [
           {
-            documento_id: documento.id,
-            cuenta: '60',
-            descripcion: 'Compras',
+            asiento_id: asiento.id,
+            cuenta_contable_id: cuentaMap.get('60') ?? '',
             debe: subtotal,
             haber: 0,
-            user_id: user.id,
+            glosa: 'Compras',
           },
           {
-            documento_id: documento.id,
-            cuenta: '40',
-            descripcion: 'Tributos por pagar - IGV',
+            asiento_id: asiento.id,
+            cuenta_contable_id: cuentaMap.get('40') ?? '',
             debe: igv,
             haber: 0,
-            user_id: user.id,
+            glosa: 'Tributos por pagar - IGV',
           },
           {
-            documento_id: documento.id,
-            cuenta: '42',
-            descripcion: 'Cuentas por pagar comerciales',
+            asiento_id: asiento.id,
+            cuenta_contable_id: cuentaMap.get('42') ?? '',
             debe: 0,
             haber: total,
-            user_id: user.id,
+            glosa: 'Cuentas por pagar comerciales',
           },
         ]
       }
 
-      const { error: asientoError } = await supabase
-        .from('asientos_contables')
-        .insert(asientosRows)
+      const { error: movError } = await supabase
+        .from('movimientos_contables')
+        .insert(movimientos)
 
-      if (asientoError) {
-        toast.error('Error al generar asientos contables', {
-          description: asientoError.message,
+      if (movError) {
+        toast.error('Error al generar movimientos contables', {
+          description: movError.message,
         })
         setSubmitting(false)
         return
@@ -504,28 +641,45 @@ export default function DocumentForm() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel className="text-zinc-300">RUC / DNI</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        maxLength={11}
-                        placeholder="20123456789"
-                        className="bg-zinc-900 border-zinc-800 text-zinc-100"
-                        onKeyDown={(e) => {
-                          if (
-                            !/[0-9]/.test(e.key) &&
-                            e.key !== 'Backspace' &&
-                            e.key !== 'Delete' &&
-                            e.key !== 'Tab' &&
-                            e.key !== 'ArrowLeft' &&
-                            e.key !== 'ArrowRight' &&
-                            !e.ctrlKey &&
-                            !e.metaKey
-                          ) {
-                            e.preventDefault()
-                          }
-                        }}
-                      />
-                    </FormControl>
+                    <div className="flex gap-2">
+                      <FormControl>
+                        <Input
+                          {...field}
+                          maxLength={11}
+                          placeholder="20123456789"
+                          className="bg-zinc-900 border-zinc-800 text-zinc-100"
+                          onKeyDown={(e) => {
+                            if (
+                              !/[0-9]/.test(e.key) &&
+                              e.key !== 'Backspace' &&
+                              e.key !== 'Delete' &&
+                              e.key !== 'Tab' &&
+                              e.key !== 'ArrowLeft' &&
+                              e.key !== 'ArrowRight' &&
+                              !e.ctrlKey &&
+                              !e.metaKey
+                            ) {
+                              e.preventDefault()
+                            }
+                          }}
+                        />
+                      </FormControl>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="shrink-0 border-zinc-700 text-zinc-400 hover:text-emerald-400 hover:border-emerald-700"
+                        onClick={handleValidarRuc}
+                        disabled={validatingRuc}
+                        title="Validar RUC"
+                      >
+                        {validatingRuc ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Search className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -587,6 +741,9 @@ export default function DocumentForm() {
                     <FormItem>
                       <FormLabel className="text-zinc-300">
                         Tipo de Cambio
+                        {fetchingTipoCambio && (
+                          <Loader2 className="ml-1 inline h-3 w-3 animate-spin text-emerald-400" />
+                        )}
                       </FormLabel>
                       <FormControl>
                         <Input
