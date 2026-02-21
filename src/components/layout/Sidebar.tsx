@@ -34,6 +34,7 @@ import {
 import { useState } from 'react'
 import { EmpresaSwitcher } from '@/components/layout/EmpresaSwitcher'
 import { ViewModeToggle } from '@/components/layout/ViewModeToggle'
+import { isModuleVisible } from '@/lib/utils/role-views'
 
 interface NavItem {
   label: string
@@ -218,7 +219,18 @@ function NavItemComponent({ item }: { item: NavItem }) {
 }
 
 export function Sidebar() {
-  const { sidebarOpen, toggleSidebar } = useAppStore()
+  const { sidebarOpen, toggleSidebar, userRol } = useAppStore()
+  const currentRol = userRol || 'contador'
+
+  const filteredNavigation = navigation
+    .filter((item) => isModuleVisible(currentRol, item.href))
+    .map((item) => {
+      if (!item.children) return item
+      const visibleChildren = item.children.filter((child) =>
+        isModuleVisible(currentRol, child.href)
+      )
+      return visibleChildren.length > 0 ? { ...item, children: visibleChildren } : item
+    })
 
   return (
     <aside
@@ -266,7 +278,7 @@ export function Sidebar() {
       {/* Navigation */}
       {sidebarOpen && (
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4 scrollbar-thin">
-          {navigation.map((item) => (
+          {filteredNavigation.map((item) => (
             <NavItemComponent key={item.href} item={item} />
           ))}
         </nav>
